@@ -42,6 +42,7 @@
 module Cogent.CodeGen where
 
 import           Cogent.Compiler
+import qualified Cogent.Common.Repr    as R
 import           Cogent.Common.Syntax  as Syn
 import           Cogent.Common.Types   as Typ
 import           Cogent.Core           as CC
@@ -629,6 +630,25 @@ absTypeCId (TCon tn ts) = do
   ts' <- forM ts $ \t -> (if isPtr t then ('p':) else id) <$> typeCId t
   return (tn ++ "_" ++ L.intercalate "_" ts')
 absTypeCId _ = __impossible "absTypeCId"
+
+-- We don't register the type id yet. but will have to do.
+-- crepr :: R.Representation -> CType
+-- crepr r@(R.Bits sz off)
+--   | R.byteAligned r = case sz of
+--       8  -> CInt False CCharT
+--       16 -> CInt False CShortT
+--       32 -> CInt False CLongT
+--       64 -> CInt False CLongLongT
+--   | R.isBitfield r  = undefined  -- impossible? (handled by the upper level)
+--   | otherwise = CArray CChar $ CArraySize (mkConst U32 (R.numofBytes r))
+-- crepr r@(R.Record fs)
+--   | R.byteAligned r = undefined  -- use C struct
+--   | otherwise = undefined  -- more analysis, e.g. group bitfields
+-- crepr (R.Variant tsz toff alts) = undefined
+
+crepr :: R.InternalRepr -> CType
+crepr r = undefined
+
 
 -- Returns the right C type
 genType :: CC.Type 'Zero -> Gen v CType

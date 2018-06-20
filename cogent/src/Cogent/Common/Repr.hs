@@ -16,6 +16,7 @@ import Cogent.Common.Syntax
 import qualified Cogent.Surface as S
 import Cogent.Util (mapAccumLM)
 
+import Control.Arrow ((&&&))
 import qualified Data.Map as M
 import Text.Parsec.Pos
 
@@ -25,10 +26,72 @@ data RepData = Rep
                , representation :: Representation
                }
 
-data Representation = Bits { allocSize :: Int, allocOffset :: Int } -- in bits 
-                    | Variant { tagSize :: Int, tagOffset :: Int, alternatives :: M.Map TagName (Integer, Representation) }
-                    | Record { fields :: M.Map FieldName Representation }
+-- vvv NOTE: The offsets in the datatype are relative to the top-level data structure,
+-- instead of its parent. This means some calculation might be required when we recurse on
+-- data representations. / zilinc
+data Representation = Bits    { allocSize    :: Int
+                              , allocOffset  :: Int }  -- in bits 
+                    | Record  { fields       :: M.Map FieldName Representation }
+                    | Variant { tagSize      :: Int
+                              , tagOffset    :: Int
+                              , alternatives :: M.Map TagName (Integer, Representation) }
                     deriving (Show, Eq, Ord)
+
+data InternalRepr   = IWord     Int  -- word-size(in byte)
+                    | IStruct [(FieldName, InternalField)]
+                    | IChunk    Int  -- #bytes
+
+data InternalField  = IField      InternalRepr
+                    | IFieldGroup [(FieldName, Int)]  -- #bits(<8); a group is of 1 byte in total
+                    | IUnion      [(TagName, InternalRepr)]
+
+sizeBits :: Representation -> Int
+sizeBits (Bits sz off) = sz + off
+sizeBits (Record fs) = maximum $ map sizeBits $ M.elems fs
+sizeBits (Variant tsz toff alts) = maximum $ tsz + toff : map (sizeBits . snd) (M.elems alts)
+
+sizeBytes :: Representation -> Int
+sizeBytes r = let (d,m) = sizeBits r `divMod` 8
+                in if m == 0 then d else d + 1
+
+offsetBits :: Representation -> Int
+offsetBits (Bits _ off) = off
+offsetBits (Record fs) = minimum $ map offsetBits $ M.elems fs
+offsetBits (Variant tsz toff alts) = minimum $ toff : map (offsetBits . snd) (M.elems alts)
+
+offsetBytes :: Representation -> Int
+offsetBytes r = let (d,m) = offsetBits r `divMod` 8
+                 in if m == 0 then d else d + 1
+
+byteAligned :: Representation -> Bool
+byteAligned (Bits sz off)
+  | sz `mod` 8 == 0 && off `mod` 8 == 0 = True
+  | otherwise = False
+byteAligned (Record fs) = and $ map byteAligned $ M.elems fs
+byteAligned (Variant tsz toff alts)
+  | tsz `mod` 8 == 0 && toff `mod` 8 == 0 &&
+    and (map (byteAligned . snd) $ M.elems alts) = True
+  | otherwise = False
+
+isBitfield :: Representation -> Bool
+isBitfield (Bits sz off) | sz `mod` 8 /= 0 && off `mod` 8 == 0 = True
+isBitfield _ = False
+
+-- restructure a repr so that it's more easily representable by C datatypes
+restructure :: Representation -> InternalRepr
+-- restructure r@(Record fs) 
+--   | not $ byteAligned r = let (gs,hs) = spilt byteAligned fs
+--                               (offs, szs) = map (sizeBits &&& offsetBits) hs
+--                               
+-- restructure r@(Variant tsz toff alts) = undefined
+restructure r = undefined
+
+-- group fields that are not byte-aligned into fields that are byte-aligned
+-- ASSUME: all input reprs are byte-UNaligned
+-- group :: [Representation] -> [Representation]
+-- group [] = []
+-- group [x] = __impossible "group: can't turn one unaliged field to an aligned field"
+-- group xs = undefined
 
 -- Once we have repr in the surface lang, this can be removed.
 dummyRepr = Bits 0 0
