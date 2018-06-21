@@ -122,7 +122,7 @@ data CType = CInt Bool CIntType    -- true is signed
            | CEnum CId
            | CPtr CType
            | CArray CType CArraySize
-           -- | CBitfield Bool c  -- True for signed field
+           -- | CBitfield Bool Int  -- True for signed field
            | CIdent CId
            | CFunction CType CType
            | CVoid
@@ -270,21 +270,21 @@ data CBlockItem = CBIStmt CStmt
                 | CBIDecl (CDeclaration IND)
                 deriving (Show)
 
-data FnSpec = FnSpec [Storage] [TypeQual] [GccAttrs] deriving (Eq, Show)
+data FnSpec = FnSpec [Storage] [TypeQual] [GccAttribute] deriving (Eq, Show)
 
 noFnSpec = FnSpec [] [] []
 staticInlineFnSpec = FnSpec [STStatic] [TQInline] []
 
 data Storage  = STStatic | STRegister | STAuto   | STExtern   deriving (Eq, Show)
 data TypeQual = TQConst  | TQVolatile | TQInline | TQRestrict deriving (Eq, Show)
-data GccAttrs = GccAttrs [GccAttr] deriving (Eq, Show)
-data GccAttr  = GccAttr String [CExpr] deriving (Eq, Show)
 
 data IND  -- internal decl
 data EXD  -- external decl
 
+data GccAttribute = GccAttribute String [CExpr] deriving (Show, Eq)
+
 data CDeclaration d where
-  CVarDecl    :: CType -> CId -> Bool -> Maybe CInitializer -> CDeclaration d -- elide `gcc_attribute list'. true if NOT extern
+  CVarDecl    :: CType -> CId -> Bool -> Maybe CInitializer -> [GccAttribute] -> CDeclaration d -- true if NOT extern
   CStructDecl :: CId -> [(CType, Maybe CId)] -> CDeclaration EXD  -- add Maybe for --funion-for-variants
   CTypeDecl   :: CType -> [CId] -> CDeclaration EXD  -- change [(t, v)] -> ... to t -> [v] -> ...
   CExtFnDecl  :: { retType :: CType,
@@ -488,7 +488,7 @@ genTyDecl (Function t1 t2, n) tns =
   if n `elem` tns then []
                   else [CDecl $ CTypeDecl (CIdent fty) [n]]
   where fty = if __cogent_funtyped_func_enum then untypedFuncEnum else unitT
-genTyDecl (Array t ms, n) _ = [CDecl $ CVarDecl t n True Nothing]
+genTyDecl (Array t ms, n) _ = [CDecl $ CVarDecl t n True Nothing []]
 genTyDecl (AbsType x, n) _ = [CMacro $ "#include <abstract/" ++ x ++ ".h>"]
 
 genTySynDecl :: (TypeName, CType) -> CExtDecl
@@ -711,7 +711,7 @@ declare ty = declareG ty Nothing
 -- XXX | declareNoReuse :: CType -> Gen v (CId, [CBlockItem], [CBlockItem])
 -- XXX | declareNoReuse ty = do
 -- XXX |   v <- freshLocalCId 'r'
--- XXX |   let decl = CBIDecl $ CVarDecl ty v True Nothing
+-- XXX |   let decl = CBIDecl $ CVarDecl ty v True Nothing []
 -- XXX |   return $ (v,[decl],[])
 
 -- XXX | A var_id given
@@ -737,7 +737,7 @@ declareG ty minit | __cogent_fshare_linear_vars = do
   case M.lookup ty pool of
     Nothing -> do
       v <- freshLocalCId 'r'
-      let decl = [CBIDecl $ CVarDecl ty v True Nothing]
+      let decl = [CBIDecl $ CVarDecl ty v True Nothing []]
       (adecl,astm) <- case minit of
                         Nothing -> return ([],[])
                         Just (CInitE e) -> assign ty (variable v) e
@@ -752,12 +752,12 @@ declareG ty minit | __cogent_fshare_linear_vars = do
         Just (CInitList il) -> extTup2l v <$> assign ty (variable v) (CCompLit ty il)
 declareG ty minit = do
   v <- freshLocalCId 'r'
-  let decl = CBIDecl $ CVarDecl ty v True minit
+  let decl = CBIDecl $ CVarDecl ty v True minit []
   return (v,[],[decl])
 
 -- XXX | similar to declareG, with a given name
 -- XXX | declareG' :: CType -> CId -> Maybe CInitializer -> Gen v CBlockItem
--- XXX | declareG' ty v minit = return (CBIDecl $ CVarDecl ty v True minit)
+-- XXX | declareG' ty v minit = return (CBIDecl $ CVarDecl ty v True minit [])
 
 -- If assigned to a var, then recycle
 maybeAssign :: CType -> Maybe CId -> CExpr -> VarPool -> Gen v (CExpr, [CBlockItem], [CBlockItem], VarPool)
@@ -1158,8 +1158,8 @@ fnSpecAttr attr = (if __cogent_fstatic_inline || inlineDef attr then fnSpecStati
 fnSpecKind ti to = (if | isTypeHasKind ti k2 && isTypeHasKind to k2 -> fnSpecAttrConst
                        | isTypeInKinds ti [k0,k2] && isTypeInKinds to [k0,k2] -> fnSpecAttrPure
                        | otherwise -> id)
-fnSpecAttrConst (FnSpec st tq ats) = FnSpec st tq (GccAttrs [GccAttr "const" []]:ats)
-fnSpecAttrPure  (FnSpec st tq ats) = FnSpec st tq (GccAttrs [GccAttr "pure"  []]:ats)
+fnSpecAttrConst (FnSpec st tq ats) = FnSpec st tq (GccAttribute "const" []:ats)
+fnSpecAttrPure  (FnSpec st tq ats) = FnSpec st tq (GccAttribute "pure"  []:ats)
 
 
 genFfiFunc :: CType -> CId -> [CType] -> Gen 'Zero [CExtDecl]
@@ -1167,7 +1167,7 @@ genFfiFunc rt fn [t]
     | [rtm,tm] <- map isPotentiallyUnmarshallable [rt,t], or [rtm,tm] = do
         arg <- freshLocalCId 'a'
         ret <- freshLocalCId 'r'
-        let body = [ CBIDecl $ CVarDecl (ref rt) ret True Nothing
+        let body = [ CBIDecl $ CVarDecl (ref rt) ret True Nothing []
                    , if rtm then CBIStmt $ CAssignFnCall (Just $ variable ret) (variable "malloc") [CSizeofTy rt]
                             else CBIStmt CEmptyStmt -- if output needs indirection
                    , CBIStmt $ CAssignFnCall (Just $ if rtm then CDeref (variable ret) else variable ret)
@@ -1509,13 +1509,14 @@ splitCType (CArray t msize)
             CArraySize sz -> C.ArraySize False (cExpr sz) noLoc  -- True will print `static sz'.
           (C.DeclSpec _ _ tsp _,dl) = splitCType t
        in (mkDeclSpec tsp, C.Array [] arrsize dl noLoc)
+-- splitCType (CBitfield s l) = undefined
 splitCType (CIdent tn) = (mkDeclSpec $ C.Tnamed (cId tn) [] noLoc, C.DeclRoot noLoc)
 splitCType (CFunction t1 t2) = __fixme $ splitCType t2  -- FIXME: this type is rarely used and is never tested / zilinc
 splitCType CVoid = (mkDeclSpec $ C.Tvoid noLoc, C.DeclRoot noLoc)
 
 cFnSpecOnDeclSpec :: FnSpec -> C.DeclSpec -> C.DeclSpec
-cFnSpecOnDeclSpec (FnSpec stg qual attr) (C.DeclSpec stg' qual' tysp loc) =
-  C.DeclSpec (stg' ++ L.map cStorage stg) (qual' ++ L.map cTypeQual qual ++ L.concatMap cAttrs attr) tysp loc
+cFnSpecOnDeclSpec (FnSpec stg qual attrs) (C.DeclSpec stg' qual' tysp loc) =
+  C.DeclSpec (stg' ++ L.map cStorage stg) (qual' ++ L.map cTypeQual qual ++ L.map cAttribute attrs) tysp loc
 cFnSpecOnDeclSpec _ decl = decl  -- NOTE: doesn't work for C.AntiDeclSpec / zilinc
 
 cFnSpecOnType :: FnSpec -> C.Type -> C.Type
@@ -1534,15 +1535,13 @@ cTypeQual TQVolatile = C.Tvolatile noLoc
 cTypeQual TQInline = C.Tinline noLoc
 cTypeQual TQRestrict = C.Trestrict noLoc
 
-cAttrs :: GccAttrs -> [C.TypeQual]
-cAttrs (GccAttrs attrs) = L.map cAttr attrs
-
-cAttr :: GccAttr -> C.TypeQual
-cAttr (GccAttr n es) = C.TAttr (C.Attr (C.Id n noLoc) (L.map cExpr es) noLoc)
+cAttribute :: GccAttribute -> C.TypeQual
+cAttribute (GccAttribute n es) = C.TAttr (C.Attr (C.Id n noLoc) (L.map cExpr es) noLoc)
 
 cDeclaration :: CDeclaration d -> C.InitGroup
-cDeclaration (CVarDecl ty v ext (Just initr)) = [cdecl| $ty:(cType ty) $id:(cId v) = $init:(cInitializer initr); |]
-cDeclaration (CVarDecl ty v ext Nothing) = [cdecl| $ty:(cType ty) $id:(cId v); |]
+cDeclaration (CVarDecl ty v ext (Just initr) []) = [cdecl| $ty:(cType ty) $id:(cId v) = $init:(cInitializer initr); |]
+cDeclaration (CVarDecl ty v ext Nothing []) = [cdecl| $ty:(cType ty) $id:(cId v); |]
+-- TODO: GccAttributes!!!
 cDeclaration (CStructDecl tid flds) = [cdecl| struct $id:(cId tid) { $sdecls:(cFieldGroups flds) }; |]
 cDeclaration (CTypeDecl ty vs) = let (dcsp, decl) = splitCType ty
                                  in C.TypedefGroup dcsp [] (map (\v -> C.Typedef (cId v) decl [] noLoc) vs) noLoc
