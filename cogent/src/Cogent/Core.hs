@@ -71,6 +71,7 @@ data Type t
   | TArray (Type t) ArraySize  -- use Int for now
                                -- XXX | ^^^ (UntypedExpr t 'Zero VarName)  -- stick to UntypedExpr to be simple / zilinc
   | TPtr (Type t) Representation Sigil  -- this sigil can only be readonly and writable
+  -- | TRefine (Type t) (TypedExpr t ('Suc 'Zero) VarName)
   deriving (Show, Eq, Ord)
 
 sigilise :: Sigil -> Maybe Representation -> (Type t -> Type t)
