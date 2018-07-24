@@ -76,7 +76,8 @@ data TypeError = FunctionNotFound VarName
                | PutNonExistingField  FieldName TCType
                | DiscardWithoutMatch TagName
                | RequiredTakenTag TagName
-               | ArithConstraintsUnsatisfiable [SExpr] String
+               | CannotFindAssignment [SExpr] String
+               | PredicatesDontHold [SExpr] String
                | CustTyGenIsPolymorphic TCType
                | CustTyGenIsSynonym TCType
                | TypeWarningAsError TypeWarning
@@ -153,8 +154,9 @@ data Constraint = (:<) (TypeFragment TCType) (TypeFragment TCType)
                 | SemiSat TypeWarning
                 | Sat
                 | Exhaustive TCType [RawPatn]
-                | Arith SExpr
-              -- | Predicate SExpr  -- closed (quantified) predicate
+                -- | Arith SExpr
+                | Exists SExpr
+                | ForAll SExpr
                 deriving (Eq, Show, Ord)
 
 #if __GLASGOW_HASKELL__ < 803
