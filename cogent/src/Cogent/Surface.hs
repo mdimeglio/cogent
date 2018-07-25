@@ -127,6 +127,10 @@ data Type e t =
               | TPut  (Maybe [FieldName]) t
               deriving (Show, Functor, Eq, Foldable, Traversable, Ord)
 
+t_u8   = TCon "U8"   [] Unboxed
+t_u32  = TCon "U32"  [] Unboxed
+t_bool = TCon "Bool" [] Unboxed
+
 data Polytype t = PT [(TyVarName, Kind)] t deriving (Eq, Show, Functor, Foldable, Traversable, Ord)
 
 numOfArgs (PT x _) = length x
@@ -167,6 +171,11 @@ data RawType = RT { unRT :: Type RawExpr RawType } deriving (Eq, Ord, Show)
 data RawExpr = RE { unRE :: Expr RawType RawPatn RawIrrefPatn RawExpr } deriving (Eq, Ord, Show)
 data RawPatn = RP { unRP :: Pattern RawIrrefPatn } deriving (Eq, Ord, Show)
 data RawIrrefPatn = RIP { unRIP :: IrrefutablePattern VarName RawIrrefPatn } deriving (Eq, Ord, Show)
+
+baseType :: RawType -> RawType
+baseType (RT (TRefine v t r)) = RT $ TRefine v (baseType t) r
+baseType (RT t) = RT $ fmap baseType t
+
 
 -- -----------------------------------------------------------------------------
 
@@ -358,7 +367,7 @@ instance Functor (Flip3 Expr e ip p) where
 instance Functor (Flip IrrefutablePattern ip) where  -- pv
   fmap f x = runIdentity (traverse (Identity . f) x)
 
-instance Functor (Flip Type e) where  -- t
+instance Functor (Flip Type t) where  -- e
   fmap f x = runIdentity (traverse (Identity . f) x)
 
 instance Functor (Flip (TopLevel t) e) where

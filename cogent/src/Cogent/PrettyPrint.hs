@@ -163,7 +163,7 @@ instance Prec (TExpr t) where
   prec (TE _ e _) = prec e
 
 instance Prec SExpr where
-  prec (SE e) = prec e
+  prec (SE e _) = prec e
   prec (SU {}) = 0
 
 -- NOTE: the difference from the definition of the fixity of Constraint
@@ -195,7 +195,7 @@ instance ExprType (TExpr t) where
   isVar (TE _ e _) = isVar e
 
 instance ExprType SExpr where
-  isVar (SE e) = isVar e
+  isVar (SE e _) = isVar e
   isVar (SU {}) = const False
 
 -- ------------------------------------
@@ -446,7 +446,7 @@ instance Pretty t => Pretty (TExpr t) where
                     | otherwise = pretty e
 
 instance Pretty SExpr where
-  pretty (SE e) = pretty e
+  pretty (SE e _) = pretty e
   pretty (SU n _) = warn ('?':show n)
 
 prettyT' :: (TypeType t, Pretty t) => t -> Doc
